@@ -4,19 +4,28 @@ Lightweight custom statusline for Claude Code showing usage limits, model availa
 
 ## Features
 
-- Real-time API usage (5h and 7d limits)
-- Per-model availability (Opus and Sonnet)
+- Real-time API usage (5-hour limit, 7-day limit for higher tiers)
+- Per-model availability (Opus and Sonnet) - only shown when available
 - Context window monitoring with auto-compact warning
 - 1-minute smart caching
 - Color-coded indicators (green/yellow/red)
+- Automatically adapts to your Claude Pro tier (basic or higher)
 
 ## Example Output
 
+**Claude Pro (higher tiers with 7-day limits):**
 ```
 [claude-sonnet-4-5-20250929] alex@hostname:project (main)
   Opus: 18% | Sonnet: 13%
   5h: 32% | 7d: 18%
   CTX: 98.8K 49%
+```
+
+**Claude Pro (basic tier):**
+```
+[claude-sonnet-4-5-20250929] alex@hostname:project (main)
+  5h: 44%
+  CTX: 23.8K 11%
 ```
 
 ## Prerequisites
@@ -36,20 +45,23 @@ sudo apt-get install jq
 ## Installation
 
 ```bash
-# 1. Clone and copy script
+# 1. Clone the repository
 git clone https://github.com/alexfazio/cc-poor-mans-statusline.git
 cd cc-poor-mans-statusline
-cp statusline.sh ~/.claude/
-chmod +x ~/.claude/statusline.sh
 
-# 2. Configure Claude Code to use ~/.claude/statusline.sh
+# 2. Make the script executable
+chmod +x statusline.sh
 
-# 3. Done! Your credentials at ~/.claude/.credentials.json are used automatically
+# 3. Configure Claude Code
+# Run the /statusline command in Claude Code and tell it to use this script:
+# Example: "Use the statusline.sh script in /path/to/cc-poor-mans-statusline/"
+
+# 4. Done! Your credentials at ~/.claude/.credentials.json are used automatically
 ```
 
 ## Customization
 
-Edit `~/.claude/statusline.sh`:
+Edit `statusline.sh`:
 
 ```bash
 CACHE_TTL=60  # API cache duration in seconds

@@ -91,8 +91,8 @@ fetch_usage() {
     local seven_day_sonnet
     seven_day_sonnet=$(echo "$response" | jq -r '.seven_day_sonnet.utilization // null' 2>/dev/null)
 
-    # Overall limits are required, model-specific are optional
-    if [ "$five_hour" = "null" ] || [ "$seven_day" = "null" ]; then
+    # At least five_hour is required
+    if [ "$five_hour" = "null" ]; then
         return 1
     fi
 
@@ -186,7 +186,7 @@ format_usage() {
 
     read -r five_hour seven_day seven_day_opus seven_day_sonnet <<< "$usage_data"
 
-    if [ -z "$five_hour" ] || [ -z "$seven_day" ]; then
+    if [ -z "$five_hour" ]; then
         echo ""
         return
     fi
@@ -194,28 +194,37 @@ format_usage() {
     # Build LINE 1: Overall limits (5h and 7d)
     local five_h_pct
     five_h_pct=$(format_percentage "$five_hour")
-    local seven_d_pct
-    seven_d_pct=$(format_percentage "$seven_day")
 
     local line1
-    line1=$(printf "5h: %s \033[1;36m|\033[0m 7d: %s" "$five_h_pct" "$seven_d_pct")
-
-    # Build LINE 2: Model-specific limits
-    # Opus uses overall 7d, Sonnet uses its dedicated limit
-    local opus_formatted
-    opus_formatted=$(format_model_usage "Opus" "$seven_day")  # Use overall, not seven_day_opus
-    local sonnet_formatted
-
-    # Sonnet: use dedicated limit if available, otherwise fall back to overall
-    if [ "$seven_day_sonnet" = "null" ] || [ -z "$seven_day_sonnet" ]; then
-        sonnet_formatted=$(format_model_usage "Sonnet" "$seven_day")
+    if [ "$seven_day" = "null" ] || [ -z "$seven_day" ]; then
+        # Only show 5h if 7d is not available
+        line1=$(printf "5h: %s" "$five_h_pct")
     else
-        sonnet_formatted=$(format_model_usage "Sonnet" "$seven_day_sonnet")
+        local seven_d_pct
+        seven_d_pct=$(format_percentage "$seven_day")
+        line1=$(printf "5h: %s \033[1;36m|\033[0m 7d: %s" "$five_h_pct" "$seven_d_pct")
     fi
 
-    # No indent - left-aligned
-    local line2
-    line2=$(printf "%s \033[1;36m|\033[0m %s" "$opus_formatted" "$sonnet_formatted")
+    # Build LINE 2: Model-specific limits (only if data is available)
+    local line2=""
+
+    # Only show model-specific limits if we have 7-day data
+    if [ "$seven_day" != "null" ] && [ -n "$seven_day" ]; then
+        # Opus uses overall 7d, Sonnet uses its dedicated limit
+        local opus_formatted
+        opus_formatted=$(format_model_usage "Opus" "$seven_day")  # Use overall, not seven_day_opus
+        local sonnet_formatted
+
+        # Sonnet: use dedicated limit if available, otherwise fall back to overall
+        if [ "$seven_day_sonnet" = "null" ] || [ -z "$seven_day_sonnet" ]; then
+            sonnet_formatted=$(format_model_usage "Sonnet" "$seven_day")
+        else
+            sonnet_formatted=$(format_model_usage "Sonnet" "$seven_day_sonnet")
+        fi
+
+        # No indent - left-aligned
+        line2=$(printf "%s \033[1;36m|\033[0m %s" "$opus_formatted" "$sonnet_formatted")
+    fi
 
     # Return with delimiter
     echo "${line1}|||${line2}"
