@@ -59,13 +59,28 @@ cd cc-poor-mans-statusline
 
 # 2. Make the script executable
 chmod +x statusline.sh
-
-# 3. Configure Claude Code
-# Run the /statusline command in Claude Code and tell it to use this script:
-# Example: "Use the statusline.sh script in /path/to/cc-poor-mans-statusline/"
-
-# 4. Done! Your credentials at ~/.claude/.credentials.json are used automatically
 ```
+
+### 3. Configure Claude Code
+
+Add the statusline to your `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/path/to/cc-poor-mans-statusline/statusline.sh"
+  }
+}
+```
+
+Replace `/path/to/` with the actual location where you cloned the repo. For example:
+- `~/Documents/GitHub/cc-poor-mans-statusline/statusline.sh`
+- `~/projects/cc-poor-mans-statusline/statusline.sh`
+
+> **Tip:** You can also use `~` for your home directory in the path.
+
+Your credentials at `~/.claude/.credentials.json` are used automatically.
 
 ## Customization
 

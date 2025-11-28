@@ -62,13 +62,13 @@ format_countdown() {
         return
     fi
 
-    # Strip timezone suffix for macOS date parsing
+    # Strip timezone suffix and milliseconds for macOS date parsing
     local ts_clean
-    ts_clean=$(echo "$iso_ts" | sed 's/+00:00$//' | sed 's/Z$//')
+    ts_clean=$(echo "$iso_ts" | sed 's/+00:00$//' | sed 's/Z$//' | sed 's/\.[0-9]*//')
 
-    # Parse ISO timestamp to epoch (macOS format)
+    # Parse ISO timestamp to epoch (macOS format) - use TZ=UTC since API returns UTC times
     local reset_epoch
-    reset_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%s" 2>/dev/null)
+    reset_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%s" 2>/dev/null)
 
     if [ -z "$reset_epoch" ]; then
         echo ""
@@ -118,26 +118,35 @@ format_absolute_time() {
         return
     fi
 
-    # Strip timezone suffix for macOS date parsing
+    # Strip timezone suffix and milliseconds for macOS date parsing
     local ts_clean
-    ts_clean=$(echo "$iso_ts" | sed 's/+00:00$//' | sed 's/Z$//')
+    ts_clean=$(echo "$iso_ts" | sed 's/+00:00$//' | sed 's/Z$//' | sed 's/\.[0-9]*//')
 
-    # Parse ISO timestamp (macOS format)
+    # Parse as UTC to get correct epoch, then format in local time
+    local epoch
+    epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%s" 2>/dev/null)
+
+    if [ -z "$epoch" ]; then
+        echo ""
+        return
+    fi
+
+    # Format the epoch in local time
     if [ "$type" = "5h" ]; then
         # Short-term: show time like "6pm" or "6:30pm"
         local mins
-        mins=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%M" 2>/dev/null)
+        mins=$(date -r "$epoch" "+%M" 2>/dev/null)
         local result
         if [ "$mins" = "00" ]; then
-            result=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%-I%p" 2>/dev/null)
+            result=$(date -r "$epoch" "+%-I%p" 2>/dev/null)
         else
-            result=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%-I:%M%p" 2>/dev/null)
+            result=$(date -r "$epoch" "+%-I:%M%p" 2>/dev/null)
         fi
         # Convert to lowercase and remove periods (AM/PM → am/pm)
         echo "$result" | tr '[:upper:]' '[:lower:]' | sed 's/\.//g'
     else
         # Long-term: show date like "Dec 5"
-        date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%b %-d" 2>/dev/null
+        date -r "$epoch" "+%b %-d" 2>/dev/null
     fi
 }
 
