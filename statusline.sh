@@ -28,6 +28,119 @@ visible_length() {
     echo "${#clean}"
 }
 
+# Powerline arrow character (U+E0B0)
+PL_ARROW=""
+
+# Powerline segment: bg color, fg color, text, next segment's bg color
+# Uses 256-color ANSI codes
+pl_segment() {
+    local bg=$1 fg=$2 text=$3 next_bg=$4
+    # Background + foreground for text, then transition arrow
+    printf "\033[48;5;%dm\033[38;5;%dm %s \033[48;5;%dm\033[38;5;%dm%s" \
+        "$bg" "$fg" "$text" "$next_bg" "$bg" "$PL_ARROW"
+}
+
+# Final powerline segment (no arrow, just reset)
+pl_segment_end() {
+    local bg=$1 fg=$2 text=$3
+    printf "\033[48;5;%dm\033[38;5;%dm %s \033[0m\033[38;5;%dm%s\033[0m" \
+        "$bg" "$fg" "$text" "$bg" "$PL_ARROW"
+}
+
+# ============================================
+# TIME FORMATTING FUNCTIONS
+# ============================================
+
+# Format countdown from ISO timestamp (e.g., "4h23m" or "2d5h")
+# Args: $1 = ISO timestamp, $2 = type ("5h" or "7d")
+format_countdown() {
+    local iso_ts=$1
+    local type=$2
+
+    if [ -z "$iso_ts" ] || [ "$iso_ts" = "null" ]; then
+        echo ""
+        return
+    fi
+
+    # Strip timezone suffix for macOS date parsing
+    local ts_clean
+    ts_clean=$(echo "$iso_ts" | sed 's/+00:00$//' | sed 's/Z$//')
+
+    # Parse ISO timestamp to epoch (macOS format)
+    local reset_epoch
+    reset_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%s" 2>/dev/null)
+
+    if [ -z "$reset_epoch" ]; then
+        echo ""
+        return
+    fi
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local diff=$((reset_epoch - now_epoch))
+
+    # If already past, show 0
+    if [ "$diff" -le 0 ]; then
+        echo "0m"
+        return
+    fi
+
+    # Format based on type
+    if [ "$type" = "5h" ]; then
+        # Short format: hours and minutes
+        local hours=$((diff / 3600))
+        local mins=$(((diff % 3600) / 60))
+        if [ "$hours" -gt 0 ]; then
+            echo "${hours}h${mins}m"
+        else
+            echo "${mins}m"
+        fi
+    else
+        # Long format: days and hours
+        local days=$((diff / 86400))
+        local hours=$(((diff % 86400) / 3600))
+        if [ "$days" -gt 0 ]; then
+            echo "${days}d${hours}h"
+        else
+            echo "${hours}h"
+        fi
+    fi
+}
+
+# Format absolute time from ISO timestamp (e.g., "6PM" or "Dec 5")
+# Args: $1 = ISO timestamp, $2 = type ("5h" or "7d")
+format_absolute_time() {
+    local iso_ts=$1
+    local type=$2
+
+    if [ -z "$iso_ts" ] || [ "$iso_ts" = "null" ]; then
+        echo ""
+        return
+    fi
+
+    # Strip timezone suffix for macOS date parsing
+    local ts_clean
+    ts_clean=$(echo "$iso_ts" | sed 's/+00:00$//' | sed 's/Z$//')
+
+    # Parse ISO timestamp (macOS format)
+    if [ "$type" = "5h" ]; then
+        # Short-term: show time like "6pm" or "6:30pm"
+        local mins
+        mins=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%M" 2>/dev/null)
+        local result
+        if [ "$mins" = "00" ]; then
+            result=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%-I%p" 2>/dev/null)
+        else
+            result=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%-I:%M%p" 2>/dev/null)
+        fi
+        # Convert to lowercase and remove periods (AM/PM → am/pm)
+        echo "$result" | tr '[:upper:]' '[:lower:]' | sed 's/\.//g'
+    else
+        # Long-term: show date like "Dec 5"
+        date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" "+%b %-d" 2>/dev/null
+    fi
+}
+
 # ============================================
 # USAGE LIMITS FUNCTIONS
 # ============================================
@@ -81,7 +194,7 @@ fetch_usage() {
         return 1
     fi
 
-    # Parse response
+    # Parse response - utilization values
     local five_hour
     five_hour=$(echo "$response" | jq -r '.five_hour.utilization // null' 2>/dev/null)
     local seven_day
@@ -91,25 +204,33 @@ fetch_usage() {
     local seven_day_sonnet
     seven_day_sonnet=$(echo "$response" | jq -r '.seven_day_sonnet.utilization // null' 2>/dev/null)
 
+    # Parse response - reset timestamps
+    local five_hour_resets
+    five_hour_resets=$(echo "$response" | jq -r '.five_hour.resets_at // null' 2>/dev/null)
+    local seven_day_resets
+    seven_day_resets=$(echo "$response" | jq -r '.seven_day.resets_at // null' 2>/dev/null)
+
     # At least five_hour is required
     if [ "$five_hour" = "null" ]; then
         return 1
     fi
 
-    # Write to cache with model-specific data
+    # Write to cache with model-specific data and reset timestamps
     local current_time
     current_time=$(date +%s)
     jq -n \
         --argjson ts "$current_time" \
         --argjson fh "$five_hour" \
+        --arg fhr "$five_hour_resets" \
         --argjson sd "$seven_day" \
+        --arg sdr "$seven_day_resets" \
         --argjson sdo "${seven_day_opus:-null}" \
         --argjson sds "${seven_day_sonnet:-null}" \
-        '{timestamp: $ts, five_hour: $fh, seven_day: $sd, seven_day_opus: $sdo, seven_day_sonnet: $sds}' \
+        '{timestamp: $ts, five_hour: $fh, five_hour_resets: $fhr, seven_day: $sd, seven_day_resets: $sdr, seven_day_opus: $sdo, seven_day_sonnet: $sds}' \
         > "$CACHE_FILE"
 
-    # Output space-separated values (for backward compatibility)
-    echo "$five_hour $seven_day $seven_day_opus $seven_day_sonnet"
+    # Output space-separated values (includes reset timestamps)
+    echo "$five_hour $seven_day $seven_day_opus $seven_day_sonnet $five_hour_resets $seven_day_resets"
     return 0
 }
 
@@ -125,7 +246,11 @@ get_usage() {
         seven_day_opus=$(jq -r '.seven_day_opus // "null"' "$CACHE_FILE" 2>/dev/null)
         local seven_day_sonnet
         seven_day_sonnet=$(jq -r '.seven_day_sonnet // "null"' "$CACHE_FILE" 2>/dev/null)
-        echo "$five_hour $seven_day $seven_day_opus $seven_day_sonnet"
+        local five_hour_resets
+        five_hour_resets=$(jq -r '.five_hour_resets // "null"' "$CACHE_FILE" 2>/dev/null)
+        local seven_day_resets
+        seven_day_resets=$(jq -r '.seven_day_resets // "null"' "$CACHE_FILE" 2>/dev/null)
+        echo "$five_hour $seven_day $seven_day_opus $seven_day_sonnet $five_hour_resets $seven_day_resets"
     else
         # Fetch from API
         fetch_usage
@@ -174,60 +299,17 @@ format_model_usage() {
     fi
 }
 
-# Function to format usage display (returns TWO lines if model data exists)
-format_usage() {
+# Function to get usage data as associative-style output
+# Returns: five_hour seven_day seven_day_opus seven_day_sonnet five_hour_resets seven_day_resets
+get_usage_data() {
     local usage_data
     usage_data=$(get_usage)
 
     if [ -z "$usage_data" ]; then
-        echo ""
-        return
+        return 1
     fi
 
-    read -r five_hour seven_day seven_day_opus seven_day_sonnet <<< "$usage_data"
-
-    if [ -z "$five_hour" ]; then
-        echo ""
-        return
-    fi
-
-    # Build LINE 1: Overall limits (5h and 7d)
-    local five_h_pct
-    five_h_pct=$(format_percentage "$five_hour")
-
-    local line1
-    if [ "$seven_day" = "null" ] || [ -z "$seven_day" ]; then
-        # Only show 5h if 7d is not available
-        line1=$(printf "5h: %s" "$five_h_pct")
-    else
-        local seven_d_pct
-        seven_d_pct=$(format_percentage "$seven_day")
-        line1=$(printf "5h: %s \033[1;36m|\033[0m 7d: %s" "$five_h_pct" "$seven_d_pct")
-    fi
-
-    # Build LINE 2: Model-specific limits (only if data is available)
-    local line2=""
-
-    # Only show model-specific limits if we have 7-day data
-    if [ "$seven_day" != "null" ] && [ -n "$seven_day" ]; then
-        # Opus uses overall 7d, Sonnet uses its dedicated limit
-        local opus_formatted
-        opus_formatted=$(format_model_usage "Opus" "$seven_day")  # Use overall, not seven_day_opus
-        local sonnet_formatted
-
-        # Sonnet: use dedicated limit if available, otherwise fall back to overall
-        if [ "$seven_day_sonnet" = "null" ] || [ -z "$seven_day_sonnet" ]; then
-            sonnet_formatted=$(format_model_usage "Sonnet" "$seven_day")
-        else
-            sonnet_formatted=$(format_model_usage "Sonnet" "$seven_day_sonnet")
-        fi
-
-        # No indent - left-aligned
-        line2=$(printf "%s \033[1;36m|\033[0m %s" "$opus_formatted" "$sonnet_formatted")
-    fi
-
-    # Return with delimiter
-    echo "${line1}|||${line2}"
+    echo "$usage_data"
 }
 
 # ============================================
@@ -337,49 +419,139 @@ format_context() {
 }
 
 # ============================================
-# BUILD THE STATUS LINE
+# BUILD THE POWERLINE STATUS LINE
 # ============================================
 
-# Build base statusline
-base_output=$(printf "\033[1;35m[%s]\033[0m " "$model_name")
-base_output="${base_output}$(printf "\033[1;36m%s@%s\033[0m:" "$(whoami)" "$(hostname -s)")"
-base_output="${base_output}$(printf "\033[1;33m%s\033[0m" "$dir_name")"
+# Color definitions (256-color palette)
+C_MAGENTA=5    # Model, Opus
+C_YELLOW=3     # Project
+C_GREEN=2      # Branch
+C_CYAN=6       # Usage limits
+C_BLUE=4       # Reset times, Sonnet
+C_GRAY=8       # Context
+C_WHITE=15     # Light text
+C_BLACK=0      # Dark text
 
+# Shorten model name (e.g., "claude-sonnet-4-5-20250929" → "sonnet-4-5")
+short_model=$(echo "$model_name" | sed 's/^claude-//' | sed 's/-[0-9]\{8\}$//')
+
+# ============================================
+# ROW 1: Model → Project → Branch
+# ============================================
+row1=""
 if [ -n "$branch" ]; then
-    base_output="${base_output} $(printf "\033[1;32m(%s)\033[0m" "$branch")"
+    row1=$(pl_segment $C_MAGENTA $C_WHITE "$short_model" $C_YELLOW)
+    row1="${row1}$(pl_segment $C_YELLOW $C_BLACK "$dir_name" $C_GREEN)"
+    row1="${row1}$(pl_segment_end $C_GREEN $C_BLACK "$branch")"
+else
+    row1=$(pl_segment $C_MAGENTA $C_WHITE "$short_model" $C_YELLOW)
+    row1="${row1}$(pl_segment_end $C_YELLOW $C_BLACK "$dir_name")"
 fi
+printf "%b\n" "$row1"
 
-# Output base statusline (line 1)
-printf "%b\n" "$base_output"
+# ============================================
+# ROW 2: Usage Limits with Reset Times
+# ============================================
+usage_data=$(get_usage_data)
+if [ -n "$usage_data" ]; then
+    read -r five_hour seven_day seven_day_opus seven_day_sonnet five_hour_resets seven_day_resets <<< "$usage_data"
 
-# Build and output metrics (lines 2, 3, and potentially 4)
-context_result=$(format_context)
-usage_result=$(format_usage)
+    if [ -n "$five_hour" ] && [ "$five_hour" != "null" ]; then
+        # Format 5h percentage
+        five_h_int=${five_hour%.*}
 
-# Parse usage result (may contain two lines separated by |||)
-usage_line1=""
-usage_line2=""
-if [ -n "$usage_result" ]; then
-    if echo "$usage_result" | grep -q '|||'; then
-        usage_line1="${usage_result%|||*}"
-        usage_line2="${usage_result#*|||}"
-    else
-        usage_line1="$usage_result"
-        usage_line2=""
+        # Build 5h reset info
+        five_h_countdown=$(format_countdown "$five_hour_resets" "5h")
+        five_h_absolute=$(format_absolute_time "$five_hour_resets" "5h")
+
+        row2=""
+        if [ "$seven_day" != "null" ] && [ -n "$seven_day" ]; then
+            # Full display: 5h and 7d
+            seven_d_int=${seven_day%.*}
+            seven_d_countdown=$(format_countdown "$seven_day_resets" "7d")
+            seven_d_absolute=$(format_absolute_time "$seven_day_resets" "7d")
+
+            # Build 5h segment
+            if [ -n "$five_h_countdown" ] && [ -n "$five_h_absolute" ]; then
+                row2=$(pl_segment $C_CYAN $C_BLACK "5h ${five_h_int}%" $C_BLUE)
+                row2="${row2}$(pl_segment $C_BLUE $C_WHITE "${five_h_countdown} @ ${five_h_absolute}" $C_CYAN)"
+            else
+                row2=$(pl_segment $C_CYAN $C_BLACK "5h ${five_h_int}%" $C_CYAN)
+            fi
+
+            # Build 7d segment
+            if [ -n "$seven_d_countdown" ] && [ -n "$seven_d_absolute" ]; then
+                row2="${row2}$(pl_segment $C_CYAN $C_BLACK "7d ${seven_d_int}%" $C_BLUE)"
+                row2="${row2}$(pl_segment_end $C_BLUE $C_WHITE "${seven_d_countdown} @ ${seven_d_absolute}")"
+            else
+                row2="${row2}$(pl_segment_end $C_CYAN $C_BLACK "7d ${seven_d_int}%")"
+            fi
+        else
+            # Basic tier: only 5h
+            if [ -n "$five_h_countdown" ] && [ -n "$five_h_absolute" ]; then
+                row2=$(pl_segment $C_CYAN $C_BLACK "5h ${five_h_int}%" $C_BLUE)
+                row2="${row2}$(pl_segment_end $C_BLUE $C_WHITE "${five_h_countdown} @ ${five_h_absolute}")"
+            else
+                row2=$(pl_segment_end $C_CYAN $C_BLACK "5h ${five_h_int}%")
+            fi
+        fi
+
+        printf "%b\n" "$row2"
     fi
 fi
 
-# Output line 2: Model-specific limits (if exists)
-if [ -n "$usage_line2" ]; then
-    printf "  %b\n" "$usage_line2"
+# ============================================
+# ROW 3: Model Limits + Context
+# ============================================
+row3=""
+has_row3=false
+
+# Model-specific limits (only if 7d data exists)
+if [ -n "$usage_data" ]; then
+    read -r five_hour seven_day seven_day_opus seven_day_sonnet five_hour_resets seven_day_resets <<< "$usage_data"
+
+    if [ "$seven_day" != "null" ] && [ -n "$seven_day" ]; then
+        has_row3=true
+        # Opus uses overall 7d
+        opus_int=${seven_day%.*}
+
+        # Sonnet: use dedicated limit if available
+        if [ "$seven_day_sonnet" != "null" ] && [ -n "$seven_day_sonnet" ]; then
+            sonnet_int=${seven_day_sonnet%.*}
+        else
+            sonnet_int=${seven_day%.*}
+        fi
+
+        row3=$(pl_segment $C_MAGENTA $C_WHITE "Opus ${opus_int}%" $C_BLUE)
+        # Check if context will follow (peek ahead)
+        ctx_check=$(format_context)
+        if [ -n "$ctx_check" ]; then
+            row3="${row3}$(pl_segment $C_BLUE $C_WHITE "Sonnet ${sonnet_int}%" $C_GRAY)"
+        else
+            row3="${row3}$(pl_segment_end $C_BLUE $C_WHITE "Sonnet ${sonnet_int}%")"
+        fi
+    fi
 fi
 
-# Output line 3: Usage limits (if present)
-if [ -n "$usage_line1" ]; then
-    printf "  %b\n" "$usage_line1"
-fi
-
-# Output line 4: Context (if present)
+# Context usage
+context_result=$(format_context)
 if [ -n "$context_result" ]; then
-    printf "  %b\n" "$context_result"
+    # Extract just the values from the formatted context
+    ctx_tokens=$(echo "$context_result" | sed 's/CTX: //' | awk '{print $1}')
+    ctx_pct=$(echo "$context_result" | grep -oE '[0-9]+%')
+    ctx_warning=""
+    if echo "$context_result" | grep -q "⚠️"; then
+        ctx_warning=" ⚠️"
+    fi
+
+    if [ "$has_row3" = true ]; then
+        row3="${row3}$(pl_segment_end $C_GRAY $C_WHITE "CTX ${ctx_tokens} ${ctx_pct}${ctx_warning}")"
+    else
+        has_row3=true
+        row3=$(pl_segment_end $C_GRAY $C_WHITE "CTX ${ctx_tokens} ${ctx_pct}${ctx_warning}")
+    fi
+fi
+
+if [ "$has_row3" = true ]; then
+    printf "%b\n" "$row3"
 fi
